@@ -31,5 +31,4 @@ dependencies = [
 pdfuse = "pdfuse.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["pdfuse*"]
+where = ["src"]

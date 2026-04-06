@@ -2,7 +2,8 @@
 .pytest_cache
 latex_build
 figs
-pdfuse/__pycache__
+.claude
+**/__pycache__/
 pdfuse.egg-info
 *.pdf
 *.png
