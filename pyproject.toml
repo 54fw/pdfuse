@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdfuse"
+version = "0.1.0"
+description = "Merge, split, and convert files to PDF from the terminal"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "pdfuse contributors" }]
+keywords = ["pdf", "merge", "split", "convert", "cli"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "pypdf>=4.0",
+    "Pillow>=10.0",
+    "docx2pdf>=0.1.8",
+    "python-docx>=1.0",
+]
+
+[project.scripts]
+pdfuse = "pdfuse.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pdfuse*"]

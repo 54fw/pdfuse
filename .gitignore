@@ -1,0 +1,7 @@
+.venv
+.pytest_cache
+figs
+pdfuse/__pycache__
+pdfuse.egg-info
+*.pdf
+*.png
