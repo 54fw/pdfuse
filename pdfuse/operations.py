@@ -1,9 +1,9 @@
-"""Core PDF operations: merge, split, convert."""
+"""Core PDF operations: merge, split, convert, compress, rotate, watermark, reorder."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -173,3 +173,228 @@ def pdf_info(input_path: Path) -> dict:
         "Creator": meta.get("/Creator", "—"),
         "Producer": meta.get("/Producer", "—"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Compress
+# ---------------------------------------------------------------------------
+
+def compress_pdf(input_path: Path, output: Path) -> tuple[int, int]:
+    """Compress a PDF by compressing content streams.
+
+    Returns (original_size_kb, compressed_size_kb).
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(str(input_path))
+    writer = PdfWriter()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Compressing pages…", total=len(reader.pages))
+        for page in reader.pages:
+            writer.add_page(page)
+            progress.advance(task)
+
+    # compress_content_streams must be called after pages are owned by the writer
+    for page in writer.pages:
+        page.compress_content_streams()
+
+    # Preserve metadata
+    if reader.metadata:
+        writer.add_metadata(dict(reader.metadata))
+
+    with open(output, "wb") as f:
+        writer.write(f)
+
+    original_kb = int(input_path.stat().st_size / 1024)
+    compressed_kb = int(output.stat().st_size / 1024)
+    return original_kb, compressed_kb
+
+
+# ---------------------------------------------------------------------------
+# Rotate
+# ---------------------------------------------------------------------------
+
+def rotate_pdf(
+    input_path: Path,
+    output: Path,
+    angle: int,
+    pages: Optional[List[int]] = None,
+) -> int:
+    """Rotate pages in *input_path* by *angle* degrees (90, 180, or 270).
+
+    *pages* is a 1-indexed list of page numbers to rotate; None means all pages.
+    Returns the number of pages rotated.
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    if angle not in (90, 180, 270):
+        raise ValueError(f"Angle must be 90, 180, or 270 — got {angle}")
+
+    reader = PdfReader(str(input_path))
+    total = len(reader.pages)
+    writer = PdfWriter()
+
+    # Normalise pages set to 0-indexed
+    if pages:
+        target = {p - 1 for p in pages}
+    else:
+        target = set(range(total))
+
+    rotated = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Rotating pages by {angle}°…", total=total)
+        for i, page in enumerate(reader.pages):
+            if i in target:
+                page.rotate(angle)
+                rotated += 1
+            writer.add_page(page)
+            progress.advance(task)
+
+    with open(output, "wb") as f:
+        writer.write(f)
+
+    return rotated
+
+
+# ---------------------------------------------------------------------------
+# Watermark
+# ---------------------------------------------------------------------------
+
+def _make_text_watermark_pdf(text: str, page_width: float, page_height: float) -> bytes:
+    """Generate an in-memory single-page PDF containing diagonal watermark text."""
+    import io
+    import math
+    from reportlab.lib.colors import Color
+    from reportlab.pdfgen import canvas as rl_canvas
+
+    buf = io.BytesIO()
+    c = rl_canvas.Canvas(buf, pagesize=(page_width, page_height))
+
+    # Semi-transparent grey diagonal text
+    c.setFillColor(Color(0.5, 0.5, 0.5, alpha=0.3))
+    c.setFont("Helvetica-Bold", max(24, min(page_width, page_height) // 10))
+
+    # Rotate around page centre
+    cx, cy = page_width / 2, page_height / 2
+    angle = math.degrees(math.atan2(page_height, page_width))
+    c.saveState()
+    c.translate(cx, cy)
+    c.rotate(angle)
+    c.drawCentredString(0, 0, text)
+    c.restoreState()
+
+    c.save()
+    return buf.getvalue()
+
+
+def watermark_pdf(
+    input_path: Path,
+    output: Path,
+    watermark_text: Optional[str] = None,
+    watermark_pdf: Optional[Path] = None,
+) -> int:
+    """Overlay a watermark on every page of *input_path*.
+
+    Provide either *watermark_text* (string rendered diagonally) or
+    *watermark_pdf* (first page used as stamp).  Returns page count.
+    """
+    import io
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(str(input_path))
+    total = len(reader.pages)
+
+    if total == 0:
+        err_console.print("[bold red]Error:[/bold red] Input PDF has 0 pages.")
+        raise SystemExit(1)
+
+    if watermark_text is None and watermark_pdf is None:
+        err_console.print("[bold red]Error:[/bold red] Provide --text or --stamp.")
+        raise SystemExit(1)
+
+    writer = PdfWriter()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Applying watermark…", total=total)
+        for page in reader.pages:
+            box = page.mediabox
+            pw = float(box.width)
+            ph = float(box.height)
+
+            if watermark_text:
+                wm_bytes = _make_text_watermark_pdf(watermark_text, pw, ph)
+                wm_reader = PdfReader(io.BytesIO(wm_bytes))
+            else:
+                wm_reader = PdfReader(str(watermark_pdf))
+
+            wm_page = wm_reader.pages[0]
+            page.merge_page(wm_page)
+            writer.add_page(page)
+            progress.advance(task)
+
+    with open(output, "wb") as f:
+        writer.write(f)
+
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Reorder
+# ---------------------------------------------------------------------------
+
+def reorder_pdf(input_path: Path, output: Path, order: List[int]) -> int:
+    """Write pages of *input_path* to *output* in the sequence given by *order*.
+
+    *order* is a 1-indexed list of page numbers, e.g. [3, 1, 2].
+    Pages may be repeated or omitted.  Returns page count written.
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(str(input_path))
+    total = len(reader.pages)
+
+    for p in order:
+        if p < 1 or p > total:
+            err_console.print(
+                f"[bold red]Error:[/bold red] Page {p} is out of range "
+                f"(document has {total} page{'s' if total != 1 else ''})."
+            )
+            raise SystemExit(1)
+
+    writer = PdfWriter()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Reordering pages…", total=len(order))
+        for p in order:
+            writer.add_page(reader.pages[p - 1])
+            progress.advance(task)
+
+    with open(output, "wb") as f:
+        writer.write(f)
+
+    return len(order)

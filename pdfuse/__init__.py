@@ -1,4 +1,4 @@
-"""pdfuse — merge, split, and convert files to PDF from the terminal."""
+"""pdfuse — merge, split, convert, compress, rotate, watermark, and reorder PDFs."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["cli", "operations", "utils"]

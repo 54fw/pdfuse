@@ -1,0 +1,330 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{parskip}
+
+% Code listing style
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\definecolor{codestr}{rgb}{0.13,0.55,0.13}
+\definecolor{codecom}{rgb}{0.5,0.5,0.5}
+\definecolor{codekw}{rgb}{0.0,0.0,0.8}
+
+\lstset{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  captionpos=b,
+  commentstyle=\color{codecom},
+  frame=single,
+  keywordstyle=\color{codekw}\bfseries,
+  language=bash,
+  showstringspaces=false,
+  stringstyle=\color{codestr},
+  xleftmargin=6pt,
+  xrightmargin=6pt,
+}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+}
+
+\title{\textbf{pdfuse v0.2.0 — Project Report}\\
+  \large New Features: Compress, Rotate, Watermark, Reorder}
+\author{Kangshuo Li}
+\date{April 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% -------------------------------------------------------------------
+\section{Overview}
+% -------------------------------------------------------------------
+
+\textbf{pdfuse} is a command-line PDF utility written in Python.
+Version~0.1.0 (Project~1) provided four core operations:
+\texttt{merge}, \texttt{split}, \texttt{convert}, and \texttt{info}.
+Version~0.2.0 (this project) adds four new operations:
+\texttt{compress}, \texttt{rotate}, \texttt{watermark}, and
+\texttt{reorder}.
+
+All commands share the same design philosophy as Project~1:
+
+\begin{itemize}[noitemsep]
+  \item Rich progress bars via the \texttt{rich} library.
+  \item Consistent \texttt{-o}/\texttt{--output} option with a sensible default.
+  \item Clear, coloured error messages on \texttt{stderr}.
+  \item Pure-Python dependencies (no external binaries required for
+        the new features).
+\end{itemize}
+
+% -------------------------------------------------------------------
+\section{What Was in Project 1}
+% -------------------------------------------------------------------
+
+\subsection{Commands}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{merge}   & Merge two or more PDFs into one file \\
+\texttt{split}   & Extract a page range from a PDF \\
+\texttt{convert} & Convert images (PNG/JPG/BMP/TIFF) or Office docs to PDF \\
+\texttt{info}    & Display metadata (pages, size, author, title, \ldots) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Dependencies}
+
+\begin{itemize}[noitemsep]
+  \item \texttt{pypdf} --- read/write PDF files
+  \item \texttt{Pillow} --- image loading and conversion
+  \item \texttt{click} --- CLI argument parsing
+  \item \texttt{rich} --- terminal output formatting
+  \item \texttt{docx2pdf} (optional) --- Office-to-PDF conversion
+\end{itemize}
+
+% -------------------------------------------------------------------
+\section{What Is New in Project 2}
+% -------------------------------------------------------------------
+
+\subsection{New Dependency: reportlab}
+
+The \texttt{watermark} command generates text watermark pages on the
+fly.  This requires a PDF canvas library.
+\texttt{reportlab}~4.x was added as a new dependency; it is
+pure-Python and installs via \texttt{pip}.
+
+\begin{lstlisting}[language=bash]
+pip install reportlab
+\end{lstlisting}
+
+No other new dependencies were introduced.
+
+\subsection{Module Changes}
+
+\begin{center}
+\begin{tabular}{lp{10cm}}
+\toprule
+\textbf{File} & \textbf{Changes} \\
+\midrule
+\texttt{pdfuse/\_\_init\_\_.py}  &
+  Version bumped from \texttt{0.1.0} to \texttt{0.2.0};
+  module docstring updated. \\
+\texttt{pdfuse/operations.py}  &
+  Added four new functions:
+  \texttt{compress\_pdf}, \texttt{rotate\_pdf},
+  \texttt{watermark\_pdf} (and helper
+  \texttt{\_make\_text\_watermark\_pdf}),
+  \texttt{reorder\_pdf}.
+  Import of \texttt{Optional} added to the type hints. \\
+\texttt{pdfuse/cli.py} &
+  Added four new Click commands (\texttt{cmd\_compress},
+  \texttt{cmd\_rotate}, \texttt{cmd\_watermark},
+  \texttt{cmd\_reorder}) and updated the import block. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% -------------------------------------------------------------------
+\section{New Commands}
+% -------------------------------------------------------------------
+
+\subsection{compress}
+
+\subsubsection*{Purpose}
+Reduce file size by applying zlib/deflate compression to every
+content stream in the PDF.  This is lossless --- no visual quality is
+lost.
+
+\subsubsection*{How it works}
+Each page is added to a \texttt{pypdf.PdfWriter} and then
+\texttt{compress\_content\_streams()} is called on every page owned
+by the writer (the method requires the page to be attached to a
+writer before it can be invoked).
+Existing metadata is preserved.
+The CLI reports the before/after file size and the percentage
+reduction.
+
+\subsubsection*{Signature}
+\begin{lstlisting}[language=bash]
+pdfuse compress FILE [-o OUTPUT]
+\end{lstlisting}
+
+\subsubsection*{Options}
+\begin{itemize}[noitemsep]
+  \item \texttt{FILE} --- input PDF.
+  \item \texttt{-o / --output} --- output path (default:
+        \texttt{compressed.pdf}).
+\end{itemize}
+
+\subsubsection*{Example}
+\begin{lstlisting}[language=bash]
+pdfuse compress report.pdf -o report_small.pdf
+# Output:
+# Compressing pages... [############################] 100%
+# Compressed report.pdf -> report_small.pdf (2 KB -> 1 KB, 50.0% reduction)
+\end{lstlisting}
+
+% -------------------------------------------------------------------
+\subsection{rotate}
+
+\subsubsection*{Purpose}
+Rotate one or more pages in a PDF by 90, 180, or 270 degrees
+(clockwise).  Useful for fixing scanned documents with wrong
+orientation.
+
+\subsubsection*{How it works}
+\texttt{pypdf} exposes \texttt{page.rotate(angle)} which updates the
+\texttt{/Rotate} entry in the page dictionary.  The operation is
+applied only to the pages listed with \texttt{--pages}; all other
+pages are copied unchanged.
+
+\subsubsection*{Signature}
+\begin{lstlisting}[language=bash]
+pdfuse rotate FILE --angle {90|180|270} [--pages N[,N...]] [-o OUTPUT]
+\end{lstlisting}
+
+\subsubsection*{Options}
+\begin{itemize}[noitemsep]
+  \item \texttt{--angle} --- rotation in degrees; must be 90, 180, or 270.
+  \item \texttt{--pages} --- comma-separated 1-indexed page numbers
+        (default: all pages).
+  \item \texttt{-o / --output} --- output path (default:
+        \texttt{rotated.pdf}).
+\end{itemize}
+
+\subsubsection*{Examples}
+\begin{lstlisting}[language=bash]
+# Rotate all pages 90 degrees clockwise
+pdfuse rotate scan.pdf --angle 90 -o scan_fixed.pdf
+
+# Rotate only page 2 by 180 degrees
+pdfuse rotate doc.pdf --angle 180 --pages 2 -o doc_p2flipped.pdf
+
+# Rotate pages 1 and 3 by 270 degrees
+pdfuse rotate doc.pdf --angle 270 --pages 1,3 -o doc_rotated.pdf
+\end{lstlisting}
+
+% -------------------------------------------------------------------
+\subsection{watermark}
+
+\subsubsection*{Purpose}
+Stamp a watermark on every page of a PDF.  Supports two modes:
+
+\begin{enumerate}[noitemsep]
+  \item \textbf{Text watermark} (\texttt{--text}): diagonal,
+        semi-transparent grey text centred on each page, generated
+        at runtime using \texttt{reportlab}.
+  \item \textbf{Stamp watermark} (\texttt{--stamp}): the first page
+        of a user-supplied PDF is overlaid on each page (useful for
+        logos or custom designs).
+\end{enumerate}
+
+\subsubsection*{How it works}
+For text watermarks, \texttt{\_make\_text\_watermark\_pdf} renders a
+\texttt{reportlab} canvas to an in-memory buffer at the exact
+dimensions of each destination page.  The font size is scaled to
+10\% of the smaller page dimension (clamped to at least 24~pt).
+Text is drawn at a diagonal angle (arctan of height/width) around
+the page centre with 30\% opacity.
+
+The watermark page is then merged onto each source page with
+\texttt{pypdf}'s \texttt{page.merge\_page()}.  For stamp PDFs the
+same merge is applied using the first page of the stamp file.
+
+\subsubsection*{Signature}
+\begin{lstlisting}[language=bash]
+pdfuse watermark FILE (--text TEXT | --stamp STAMP_PDF) [-o OUTPUT]
+\end{lstlisting}
+
+\subsubsection*{Options}
+\begin{itemize}[noitemsep]
+  \item \texttt{--text TEXT} --- watermark string (e.g.\
+        \texttt{CONFIDENTIAL}).
+  \item \texttt{--stamp STAMP\_PDF} --- PDF file whose first page is
+        used as the stamp.
+  \item \texttt{-o / --output} --- output path (default:
+        \texttt{watermarked.pdf}).
+\end{itemize}
+
+\subsubsection*{Examples}
+\begin{lstlisting}[language=bash]
+# Add diagonal text watermark
+pdfuse watermark contract.pdf --text "DRAFT" -o contract_draft.pdf
+
+# Use a custom PDF stamp (e.g. a logo page)
+pdfuse watermark report.pdf --stamp logo.pdf -o report_branded.pdf
+\end{lstlisting}
+
+% -------------------------------------------------------------------
+\subsection{reorder}
+
+\subsubsection*{Purpose}
+Write the pages of a PDF in an arbitrary order specified by the user.
+Pages may be repeated, omitted, or rearranged.
+
+\subsubsection*{How it works}
+The user provides a comma-separated list of 1-indexed page numbers
+via \texttt{--order}.  The function reads each requested page from
+the source \texttt{PdfReader} and writes them to a new
+\texttt{PdfWriter} in the specified sequence.  Out-of-range page
+numbers are caught before writing begins.
+
+\subsubsection*{Signature}
+\begin{lstlisting}[language=bash]
+pdfuse reorder FILE --order N[,N...] [-o OUTPUT]
+\end{lstlisting}
+
+\subsubsection*{Options}
+\begin{itemize}[noitemsep]
+  \item \texttt{--order} --- comma-separated 1-indexed page list,
+        e.g.\ \texttt{3,1,2}.  Pages can be repeated.
+  \item \texttt{-o / --output} --- output path (default:
+        \texttt{reordered.pdf}).
+\end{itemize}
+
+\subsubsection*{Examples}
+\begin{lstlisting}[language=bash]
+# Reverse a 3-page document
+pdfuse reorder doc.pdf --order 3,2,1 -o doc_reversed.pdf
+
+# Move the cover page (page 1) to the end
+pdfuse reorder doc.pdf --order 2,3,4,5,1 -o doc_cover_last.pdf
+
+# Duplicate a page (print page 1 twice)
+pdfuse reorder doc.pdf --order 1,1,2,3 -o doc_dup_cover.pdf
+\end{lstlisting}
+
+% -------------------------------------------------------------------
+\section{Summary of Changes}
+% -------------------------------------------------------------------
+
+\begin{center}
+\begin{tabular}{llp{7.5cm}}
+\toprule
+\textbf{Version} & \textbf{Commands} & \textbf{Notes} \\
+\midrule
+0.1.0 & \texttt{merge, split, convert, info} &
+  Initial release. \\
+0.2.0 & + \texttt{compress, rotate, watermark, reorder} &
+  Four new PDF manipulation commands added.
+  New dependency: \texttt{reportlab}.
+  No breaking changes to existing commands. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
