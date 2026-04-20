@@ -1,0 +1,311 @@
+"""CLI integration tests for pdfuse folder commands."""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+from click.testing import CliRunner
+from pypdf import PdfReader
+
+from conftest import make_pdf_bytes
+from pdfuse.cli import main
+
+
+@pytest.fixture
+def runner():
+    return CliRunner()
+
+
+# ---------------------------------------------------------------------------
+# folder compress
+# ---------------------------------------------------------------------------
+
+class TestFolderCompress:
+    def test_success(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(2))
+        (src / "b.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["folder", "compress", str(src), "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert (out / "a.pdf").exists()
+        assert (out / "b.pdf").exists()
+
+    def test_creates_output_dir(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "new_out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        result = runner.invoke(main, ["folder", "compress", str(src), "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert out.is_dir()
+
+    def test_recursive(self, runner, tmp_path):
+        src = tmp_path / "in"
+        sub = src / "sub"
+        out = tmp_path / "out"
+        src.mkdir()
+        sub.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        (sub / "b.pdf").write_bytes(make_pdf_bytes(1))
+        result = runner.invoke(main, ["folder", "compress", str(src), "-o", str(out), "--recursive"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert (out / "a.pdf").exists()
+        assert (out / "sub" / "b.pdf").exists()
+
+    def test_parallel_workers(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        for i in range(4):
+            (src / f"{i}.pdf").write_bytes(make_pdf_bytes(1))
+        result = runner.invoke(main, ["folder", "compress", str(src), "-o", str(out), "--workers", "2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(list(out.glob("*.pdf"))) == 4
+
+    def test_empty_dir(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        result = runner.invoke(main, ["folder", "compress", str(src), "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+
+    def test_missing_dir(self, runner, tmp_path):
+        result = runner.invoke(main, ["folder", "compress", str(tmp_path / "nope"), "-o", str(tmp_path / "out")])
+        assert result.exit_code == 1
+
+    def test_pattern_filter(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "keep.pdf").write_bytes(make_pdf_bytes(1))
+        (src / "skip.txt").write_text("not a pdf")
+        result = runner.invoke(main, ["folder", "compress", str(src), "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert (out / "keep.pdf").exists()
+        assert not (out / "skip.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# folder rotate
+# ---------------------------------------------------------------------------
+
+class TestFolderRotate:
+    def test_success(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["folder", "rotate", str(src), "-o", str(out), "--angle", "90"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out / "a.pdf")).pages) == 3
+
+    def test_all_angles(self, runner, tmp_path):
+        for angle in ["90", "180", "270"]:
+            src = tmp_path / f"in_{angle}"
+            out = tmp_path / f"out_{angle}"
+            src.mkdir()
+            (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+            result = runner.invoke(main, ["folder", "rotate", str(src), "-o", str(out), "--angle", angle], catch_exceptions=False)
+            assert result.exit_code == 0
+
+    def test_missing_angle(self, runner, tmp_path):
+        src = tmp_path / "in"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        result = runner.invoke(main, ["folder", "rotate", str(src), "-o", str(tmp_path / "out")])
+        assert result.exit_code != 0
+
+    def test_specific_pages(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(4))
+        result = runner.invoke(main, ["folder", "rotate", str(src), "-o", str(out), "--angle", "90", "--pages", "1,3"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out / "a.pdf")).pages) == 4
+
+
+# ---------------------------------------------------------------------------
+# folder watermark
+# ---------------------------------------------------------------------------
+
+class TestFolderWatermark:
+    def test_text_watermark(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(2))
+        result = runner.invoke(main, ["folder", "watermark", str(src), "-o", str(out), "--text", "DRAFT"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out / "a.pdf")).pages) == 2
+
+    def test_stamp_watermark(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        stamp = tmp_path / "stamp.pdf"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(2))
+        stamp.write_bytes(make_pdf_bytes(1))
+        result = runner.invoke(main, ["folder", "watermark", str(src), "-o", str(out), "--stamp", str(stamp)], catch_exceptions=False)
+        assert result.exit_code == 0
+
+    def test_no_flag_raises(self, runner, tmp_path):
+        src = tmp_path / "in"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        result = runner.invoke(main, ["folder", "watermark", str(src), "-o", str(tmp_path / "out")])
+        assert result.exit_code == 1
+
+    def test_both_flags_raises(self, runner, tmp_path):
+        src = tmp_path / "in"
+        stamp = tmp_path / "stamp.pdf"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        stamp.write_bytes(make_pdf_bytes(1))
+        result = runner.invoke(main, ["folder", "watermark", str(src), "-o", str(tmp_path / "out"), "--text", "X", "--stamp", str(stamp)])
+        assert result.exit_code == 1
+
+    def test_multiple_files(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        for i in range(3):
+            (src / f"{i}.pdf").write_bytes(make_pdf_bytes(2))
+        result = runner.invoke(main, ["folder", "watermark", str(src), "-o", str(out), "--text", "CONFIDENTIAL"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(list(out.glob("*.pdf"))) == 3
+
+
+# ---------------------------------------------------------------------------
+# folder reorder
+# ---------------------------------------------------------------------------
+
+class TestFolderReorder:
+    def test_success(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["folder", "reorder", str(src), "-o", str(out), "--order", "3,1,2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out / "a.pdf")).pages) == 3
+
+    def test_repeat_pages(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["folder", "reorder", str(src), "-o", str(out), "--order", "1,1,2"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out / "a.pdf")).pages) == 3
+
+    def test_missing_order(self, runner, tmp_path):
+        src = tmp_path / "in"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(2))
+        result = runner.invoke(main, ["folder", "reorder", str(src), "-o", str(tmp_path / "out")])
+        assert result.exit_code != 0
+
+    def test_failed_file_warns_but_continues(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "good.pdf").write_bytes(make_pdf_bytes(3))
+        (src / "bad.pdf").write_bytes(make_pdf_bytes(2))
+        # order 5 is out of range for a 2-page PDF but valid for the 3-page one
+        result = runner.invoke(main, ["folder", "reorder", str(src), "-o", str(out), "--order", "1,2,3"])
+        # good.pdf succeeds, bad.pdf fails → exit 1 but good.pdf is written
+        assert result.exit_code == 1
+        assert (out / "good.pdf").exists()
+
+
+# ---------------------------------------------------------------------------
+# folder merge
+# ---------------------------------------------------------------------------
+
+class TestFolderMerge:
+    def test_name_sort(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "merged.pdf"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        (src / "b.pdf").write_bytes(make_pdf_bytes(2))
+        (src / "c.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["folder", "merge", str(src), "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out)).pages) == 6
+
+    def test_sort_date(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "merged.pdf"
+        src.mkdir()
+        a = src / "a.pdf"
+        b = src / "b.pdf"
+        a.write_bytes(make_pdf_bytes(2))
+        b.write_bytes(make_pdf_bytes(3))
+        os.utime(a, (1_000_000, 1_000_000))
+        os.utime(b, (2_000_000, 2_000_000))
+        result = runner.invoke(main, ["folder", "merge", str(src), "-o", str(out), "--sort", "date"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out)).pages) == 5
+
+    def test_reverse(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "merged.pdf"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        (src / "b.pdf").write_bytes(make_pdf_bytes(2))
+        result = runner.invoke(main, ["folder", "merge", str(src), "-o", str(out), "--reverse"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out)).pages) == 3
+
+    def test_recursive(self, runner, tmp_path):
+        src = tmp_path / "in"
+        sub = src / "sub"
+        out = tmp_path / "merged.pdf"
+        src.mkdir()
+        sub.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(1))
+        (sub / "b.pdf").write_bytes(make_pdf_bytes(2))
+        result = runner.invoke(main, ["folder", "merge", str(src), "-o", str(out), "--recursive"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out)).pages) == 3
+
+    def test_empty_dir(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "merged.pdf"
+        src.mkdir()
+        result = runner.invoke(main, ["folder", "merge", str(src), "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert not out.exists()
+
+    def test_missing_dir(self, runner, tmp_path):
+        result = runner.invoke(main, ["folder", "merge", str(tmp_path / "nope"), "-o", str(tmp_path / "out.pdf")])
+        assert result.exit_code == 1
+
+    def test_pattern_filter(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "merged.pdf"
+        src.mkdir()
+        (src / "keep.pdf").write_bytes(make_pdf_bytes(2))
+        (src / "other.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["folder", "merge", str(src), "-o", str(out), "--pattern", "keep*.pdf"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out)).pages) == 2
+
+    def test_sort_date_reverse(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "merged.pdf"
+        src.mkdir()
+        a = src / "a.pdf"
+        b = src / "b.pdf"
+        a.write_bytes(make_pdf_bytes(1))
+        b.write_bytes(make_pdf_bytes(2))
+        os.utime(a, (1_000_000, 1_000_000))
+        os.utime(b, (2_000_000, 2_000_000))
+        result = runner.invoke(main, ["folder", "merge", str(src), "-o", str(out), "--sort", "date", "--reverse"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out)).pages) == 3
