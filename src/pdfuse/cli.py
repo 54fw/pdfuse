@@ -648,3 +648,43 @@ def folder_merge(
         f"[bold green]✓[/bold green] Merged {len(files)} file(s) → "
         f"[cyan]{out_path}[/cyan] ({total_pages} page{'s' if total_pages != 1 else ''})"
     )
+
+
+# ---------------------------------------------------------------------------
+# batch
+# ---------------------------------------------------------------------------
+
+@main.command("batch")
+@click.argument("workflow", metavar="WORKFLOW.yaml")
+def cmd_batch(workflow: str) -> None:
+    """Execute a multi-step PDF workflow defined in a YAML file.
+
+    \b
+    The YAML file must specify 'input' (single file) or 'input_folder' (directory),
+    a list of 'steps', and a matching 'output' or 'output_folder'.
+
+    \b
+    Example:
+      input: report.pdf
+      steps:
+        - compress
+        - watermark:
+            text: "CONFIDENTIAL"
+        - rotate:
+            angle: 90
+      output: final.pdf
+    """
+    from pdfuse.batch import load_workflow, run_workflow
+
+    yaml_path = Path(workflow)
+    if not yaml_path.exists():
+        err_console.print(
+            f"[bold red]Error:[/bold red] Workflow file not found: {workflow}"
+        )
+        raise SystemExit(1)
+    if not yaml_path.is_file():
+        err_console.print(f"[bold red]Error:[/bold red] Not a file: {workflow}")
+        raise SystemExit(1)
+
+    cfg = load_workflow(yaml_path)
+    run_workflow(cfg)
