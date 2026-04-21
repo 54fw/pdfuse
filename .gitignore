@@ -11,3 +11,8 @@ pdfuse.egg-info
 *.log
 *.out
 *.toc
+
+*.snm
+*.nav
+*.vrb
+*.synctex.gz
