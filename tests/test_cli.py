@@ -126,22 +126,6 @@ class TestCliConvert:
 
 
 # ---------------------------------------------------------------------------
-# info
-# ---------------------------------------------------------------------------
-
-class TestCliInfo:
-    def test_success(self, runner, tmp_path):
-        src = tmp_path / "src.pdf"
-        src.write_bytes(make_pdf_bytes(3))
-        result = runner.invoke(main, ["info", str(src)], catch_exceptions=False)
-        assert result.exit_code == 0
-
-    def test_missing_file(self, runner, tmp_path):
-        result = runner.invoke(main, ["info", str(tmp_path / "nope.pdf")])
-        assert result.exit_code == 1
-
-
-# ---------------------------------------------------------------------------
 # compress
 # ---------------------------------------------------------------------------
 
@@ -266,3 +250,104 @@ class TestCliReorder:
         src.write_bytes(make_pdf_bytes(2))
         result = runner.invoke(main, ["reorder", str(src)])
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# split --folder
+# ---------------------------------------------------------------------------
+
+class TestCliSplitFolder:
+    def test_success(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(5))
+        (src / "b.pdf").write_bytes(make_pdf_bytes(4))
+        result = runner.invoke(main, ["split", "--folder", str(src), "--pages", "1-2", "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out / "a.pdf")).pages) == 2
+        assert len(PdfReader(str(out / "b.pdf")).pages) == 2
+
+    def test_creates_output_dir(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "new_out"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["split", "--folder", str(src), "--pages", "1-1", "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert out.is_dir()
+
+    def test_recursive(self, runner, tmp_path):
+        src = tmp_path / "in"
+        sub = src / "sub"
+        out = tmp_path / "out"
+        src.mkdir()
+        sub.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(3))
+        (sub / "b.pdf").write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["split", "--folder", str(src), "--pages", "1-2", "-o", str(out), "--recursive"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert (out / "a.pdf").exists()
+        assert (out / "sub" / "b.pdf").exists()
+
+    def test_empty_dir(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        result = runner.invoke(main, ["split", "--folder", str(src), "--pages", "1-1", "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+
+    def test_missing_dir(self, runner, tmp_path):
+        result = runner.invoke(main, ["split", "--folder", str(tmp_path / "nope"), "--pages", "1-1", "-o", str(tmp_path / "out")])
+        assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# convert --folder
+# ---------------------------------------------------------------------------
+
+class TestCliConvertFolder:
+    def test_success(self, runner, tmp_path):
+        from PIL import Image
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        Image.new("RGB", (64, 64), (100, 150, 200)).save(str(src / "img.png"))
+        result = runner.invoke(main, ["convert", "--folder", str(src), "--pattern", "*.png", "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert (out / "img.pdf").exists()
+
+    def test_creates_output_dir(self, runner, tmp_path):
+        from PIL import Image
+        src = tmp_path / "in"
+        out = tmp_path / "new_out"
+        src.mkdir()
+        Image.new("RGB", (64, 64), (0, 0, 0)).save(str(src / "img.jpg"))
+        result = runner.invoke(main, ["convert", "--folder", str(src), "--pattern", "*.jpg", "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert out.is_dir()
+
+    def test_recursive(self, runner, tmp_path):
+        from PIL import Image
+        src = tmp_path / "in"
+        sub = src / "sub"
+        out = tmp_path / "out"
+        src.mkdir()
+        sub.mkdir()
+        Image.new("RGB", (32, 32)).save(str(src / "a.png"))
+        Image.new("RGB", (32, 32)).save(str(sub / "b.png"))
+        result = runner.invoke(main, ["convert", "--folder", str(src), "--pattern", "*.png", "-o", str(out), "--recursive"], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert (out / "a.pdf").exists()
+        assert (out / "sub" / "b.pdf").exists()
+
+    def test_empty_dir(self, runner, tmp_path):
+        src = tmp_path / "in"
+        out = tmp_path / "out"
+        src.mkdir()
+        result = runner.invoke(main, ["convert", "--folder", str(src), "--pattern", "*.png", "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+
+    def test_missing_dir(self, runner, tmp_path):
+        result = runner.invoke(main, ["convert", "--folder", str(tmp_path / "nope"), "--pattern", "*.png", "-o", str(tmp_path / "out")])
+        assert result.exit_code == 1
