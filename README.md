@@ -293,6 +293,9 @@ Execute a sequence of operations defined in a YAML file.
 
 ```bash
 pdfuse batch workflow.yaml
+
+# Override the file pattern from the command line (folder modes only)
+pdfuse batch workflow.yaml --pattern "report*.pdf"
 ```
 
 ### Single-file workflow
@@ -312,25 +315,15 @@ steps:
 output: final.pdf
 ```
 
+Intermediate files are written to a temporary directory and cleaned up automatically. The original input file is never modified.
+
 ```
-Running workflow: workflow.yaml
-  [1/4] compress
-  [2/4] watermark: "CONFIDENTIAL"
-  [3/4] split: pages 1-10
-  [4/4] rotate: 90° on pages 2,4
-
-── [1/4] compress ──────────────────
-  Compressing pages… ━━━━━━━━━━━ 100%
-── [2/4] watermark: "CONFIDENTIAL" ─
-  Applying watermark… ━━━━━━━━━━ 100%
-...
-
 ✓ Workflow complete → final.pdf
 ```
 
-Intermediate files are written to a temporary directory and cleaned up automatically. The original input file is never modified.
+### Folder workflow — per-file output
 
-### Folder workflow
+Each file in the folder is independently run through the pipeline and written to `output_folder`.
 
 ```yaml
 # bulk.yaml
@@ -349,15 +342,52 @@ pdfuse batch bulk.yaml
 
 Failed files print a warning and processing continues; the exit code is 1 if any file failed.
 
+### Folder workflow — merge all into one file
+
+Add a `merge` step anywhere in the pipeline. Steps **before** `merge` are applied to each file
+individually; `merge` collects all results and combines them into one PDF; steps **after** `merge`
+are applied to that single merged file.
+
+The result is written to `{output_folder}/{output_name}` (default `output_name: merged.pdf`),
+or to an exact path via `output`.
+
+```yaml
+# assemble.yaml
+input_folder: ./chapters/
+steps:
+  - merge:
+      sort: name          # "name" (alphabetical, default) or "date" (last modified)
+      reverse: false      # true to reverse sort order
+      pattern: "*.pdf"    # glob filter (default: *.pdf)
+  - compress
+  - watermark:
+      text: "DRAFT"
+output_folder: ./processed/
+output_name: book.pdf     # optional; default: merged.pdf
+```
+
+```bash
+pdfuse batch assemble.yaml
+
+# Override pattern at runtime
+pdfuse batch assemble.yaml --pattern "ch*.pdf"
+```
+
+```
+Summary: 5 succeeded, 0 failed
+✓ Merged 5 file(s) → ./processed/book.pdf
+```
+
 ### Supported step types
 
-| Step | Required params | Optional params |
+| Step | In single-file workflow | In folder workflow |
 |---|---|---|
 | `compress` | — | — |
-| `watermark` | `text` **or** `stamp` | — |
-| `split` | `pages` (e.g. `"1-5"`) | — |
-| `rotate` | `angle` (90 / 180 / 270) | `pages` |
-| `reorder` | `order` (e.g. `"3,1,2"`) | — |
+| `merge` | `with` (comma-separated paths or YAML list) | `sort`, `reverse`, `pattern` (all optional) |
+| `watermark` | `text` **or** `stamp` | same |
+| `split` | `pages` (e.g. `"1-5"`) | same |
+| `rotate` | `angle` (90 / 180 / 270); optional `pages` | same |
+| `reorder` | `order` (e.g. `"3,1,2"`) | same |
 
 ---
 

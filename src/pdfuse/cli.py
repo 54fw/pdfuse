@@ -534,7 +534,11 @@ def cmd_rotate(
         validated = validate_input_files([input], allowed_exts={".pdf"})
         src = validated[0]
         out_path = validate_output_path(output or "rotated.pdf")
-        rotated = rotate_pdf(src, out_path, int(angle), page_list)
+        try:
+            rotated = rotate_pdf(src, out_path, int(angle), page_list)
+        except ValueError as exc:
+            err_console.print(f"[bold red]Error:[/bold red] {exc}")
+            raise SystemExit(1)
         page_desc = f"page{'s' if rotated != 1 else ''} {pages}" if pages else "all pages"
         console.print(
             f"[bold green]✓[/bold green] Rotated {rotated} {page_desc} by {angle}° → "
@@ -555,6 +559,12 @@ def cmd_rotate(
     metavar="STAMP_PDF",
     help="Path to a single-page PDF used as the watermark stamp.",
 )
+@click.option(
+    "--pages",
+    default=None,
+    metavar="N[,N...]",
+    help="Comma-separated 1-indexed page numbers to watermark (default: all pages).",
+)
 @click.option("-o", "--output", default=None, help="Output PDF path or directory (with --folder).")
 @click.option("--folder", default=None, metavar="DIR", help="Watermark all PDFs in this directory.")
 @click.option("--recursive", is_flag=True, default=False, help="With --folder: recurse into subdirectories.")
@@ -564,6 +574,7 @@ def cmd_watermark(
     input: str | None,
     text: str | None,
     stamp: str | None,
+    pages: str | None,
     output: str | None,
     folder: str | None,
     recursive: bool,
@@ -599,6 +610,16 @@ def cmd_watermark(
         )
         raise SystemExit(1)
 
+    page_list: list[int] | None = None
+    if pages:
+        try:
+            page_list = [int(p.strip()) for p in pages.split(",")]
+        except ValueError:
+            err_console.print(
+                "[bold red]Error:[/bold red] --pages must be comma-separated integers, e.g. 1,3,5"
+            )
+            raise SystemExit(1)
+
     stamp_path: Path | None = None
     if stamp:
         stamp_validated = validate_input_files([stamp], allowed_exts={".pdf"})
@@ -611,14 +632,14 @@ def cmd_watermark(
         label = f'Watermarking with "{text}"' if text else f"Watermarking with {stamp_path.name}"  # type: ignore[union-attr]
         _run_folder(
             folder, output, recursive, pattern, workers,
-            lambda src, dst: watermark_pdf(src, dst, watermark_text=text, watermark_pdf=stamp_path),
+            lambda src, dst: watermark_pdf(src, dst, watermark_text=text, watermark_pdf=stamp_path, pages=page_list),
             label,
         )
     else:
         validated = validate_input_files([input], allowed_exts={".pdf"})
         src = validated[0]
         out_path = validate_output_path(output or "watermarked.pdf")
-        wm_pages = watermark_pdf(src, out_path, watermark_text=text, watermark_pdf=stamp_path)
+        wm_pages = watermark_pdf(src, out_path, watermark_text=text, watermark_pdf=stamp_path, pages=page_list)
         label = f'"{text}"' if text else stamp_path.name  # type: ignore[union-attr]
         console.print(
             f"[bold green]✓[/bold green] Watermarked {wm_pages} page(s) with {label} → "
@@ -708,7 +729,13 @@ def cmd_reorder(
 
 @main.command("batch")
 @click.argument("workflow", metavar="WORKFLOW.yaml")
-def cmd_batch(workflow: str) -> None:
+@click.option(
+    "--pattern",
+    default=None,
+    metavar="TEXT",
+    help="Override the glob pattern in the workflow YAML (folder modes only).",
+)
+def cmd_batch(workflow: str, pattern: str | None) -> None:
     """Execute a multi-step PDF workflow defined in a YAML file.
 
     \b
@@ -716,7 +743,7 @@ def cmd_batch(workflow: str) -> None:
     a list of 'steps', and a matching 'output' or 'output_folder'.
 
     \b
-    Example:
+    Single-file example:
       input: report.pdf
       steps:
         - compress
@@ -725,6 +752,15 @@ def cmd_batch(workflow: str) -> None:
         - rotate:
             angle: 90
       output: final.pdf
+
+    \b
+    Folder-merge example (all files processed then merged into one):
+      input_folder: ./chapters/
+      pattern: "*.pdf"
+      sort: name
+      steps:
+        - compress
+      output: book.pdf
     """
     from pdfuse.batch import load_workflow, run_workflow
 
@@ -739,4 +775,10 @@ def cmd_batch(workflow: str) -> None:
         raise SystemExit(1)
 
     cfg = load_workflow(yaml_path)
+    if pattern is not None:
+        cfg.pattern = pattern
+        if cfg.input_folder is not None:
+            for step in cfg.steps:
+                if step.name == "merge":
+                    step.params["pattern"] = pattern
     run_workflow(cfg)

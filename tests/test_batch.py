@@ -55,7 +55,7 @@ class TestParseStep:
 
     def test_unknown_step_raises(self):
         with pytest.raises(ValueError, match="Unknown step"):
-            _parse_step("merge")
+            _parse_step("foobar")
 
     def test_invalid_type_raises(self):
         with pytest.raises(ValueError):
@@ -108,6 +108,49 @@ class TestValidateStepParams:
         with pytest.raises(ValueError, match="order"):
             _validate_step_params(StepConfig("reorder", {}))
 
+    def test_merge_no_params_ok(self):
+        _validate_step_params(StepConfig("merge"))  # no params required at step level
+
+    def test_merge_with_ok(self):
+        _validate_step_params(StepConfig("merge", {"with": ["a.pdf", "b.pdf"]}))
+
+    def test_merge_sort_name_ok(self):
+        _validate_step_params(StepConfig("merge", {"sort": "name"}))
+
+    def test_merge_sort_date_ok(self):
+        _validate_step_params(StepConfig("merge", {"sort": "date"}))
+
+    def test_merge_bad_sort_raises(self):
+        with pytest.raises(ValueError, match="sort must be"):
+            _validate_step_params(StepConfig("merge", {"sort": "size"}))
+
+    def test_unknown_param_compress_raises(self):
+        with pytest.raises(ValueError, match="unknown parameter"):
+            _validate_step_params(StepConfig("compress", {"level": 9}))
+
+    def test_unknown_param_rotate_raises(self):
+        with pytest.raises(ValueError, match="unknown parameter"):
+            _validate_step_params(StepConfig("rotate", {"angle": 90, "quality": "high"}))
+
+    def test_unknown_param_watermark_raises(self):
+        with pytest.raises(ValueError, match="unknown parameter"):
+            _validate_step_params(StepConfig("watermark", {"text": "X", "opacity": 0.5}))
+
+    def test_unknown_param_split_raises(self):
+        with pytest.raises(ValueError, match="unknown parameter"):
+            _validate_step_params(StepConfig("split", {"pages": "1-3", "extra": True}))
+
+    def test_unknown_param_reorder_raises(self):
+        with pytest.raises(ValueError, match="unknown parameter"):
+            _validate_step_params(StepConfig("reorder", {"order": "1,2", "foo": "bar"}))
+
+    def test_unknown_param_merge_raises(self):
+        with pytest.raises(ValueError, match="unknown parameter"):
+            _validate_step_params(StepConfig("merge", {"sort": "name", "blah": True}))
+
+    def test_watermark_pages_allowed(self):
+        _validate_step_params(StepConfig("watermark", {"text": "X", "pages": "1,3"}))
+
 
 # ---------------------------------------------------------------------------
 # _step_label
@@ -134,6 +177,16 @@ class TestStepLabel:
 
     def test_reorder(self):
         assert _step_label(StepConfig("reorder", {"order": "3,1,2"})) == "reorder: [3,1,2]"
+
+    def test_merge_single_file_mode(self):
+        assert _step_label(StepConfig("merge", {"with": ["a.pdf", "b.pdf"]})) == "merge: +2 file(s)"
+
+    def test_merge_folder_mode_defaults(self):
+        assert _step_label(StepConfig("merge")) == "merge: all '*.pdf' (sort=name)"
+
+    def test_merge_folder_mode_with_params(self):
+        label = _step_label(StepConfig("merge", {"pattern": "*.pdf", "sort": "date", "reverse": True}))
+        assert label == "merge: all '*.pdf' (sort=date ↓)"
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +272,7 @@ class TestLoadWorkflowSingleFile:
         p = _write_workflow(tmp_path, """
             input: src.pdf
             steps:
-              - merge
+              - foobar
             output: out.pdf
         """)
         with pytest.raises(SystemExit):
@@ -309,6 +362,95 @@ class TestLoadWorkflowFolder:
         with pytest.raises(SystemExit):
             load_workflow(p)
 
+    def test_both_output_and_output_folder_raises(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: docs
+            steps:
+              - compress
+            output: out.pdf
+            output_folder: out/
+        """)
+        with pytest.raises(SystemExit):
+            load_workflow(p)
+
+    def test_folder_merge_mode_output_folder(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: docs
+            steps:
+              - merge:
+                  sort: name
+                  pattern: "*.pdf"
+              - compress
+            output_folder: out
+        """)
+        cfg = load_workflow(p)
+        assert cfg.input_folder == tmp_path / "docs"
+        assert cfg.output_folder == tmp_path / "out"
+        assert cfg.output is None
+        assert cfg.output_name == "merged.pdf"  # default
+        assert cfg.pattern == "*.pdf"
+
+    def test_folder_merge_mode_output_name(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: docs
+            steps:
+              - merge
+            output_folder: out
+            output_name: contracts_final.pdf
+        """)
+        cfg = load_workflow(p)
+        assert cfg.output_name == "contracts_final.pdf"
+
+    def test_folder_merge_mode_exact_output(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: docs
+            steps:
+              - merge
+            output: result.pdf
+        """)
+        cfg = load_workflow(p)
+        assert cfg.output == tmp_path / "result.pdf"
+        assert cfg.output_folder is None
+
+    def test_folder_merge_invalid_sort_raises(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: docs
+            steps:
+              - merge:
+                  sort: size
+            output_folder: out
+        """)
+        with pytest.raises(SystemExit):
+            load_workflow(p)
+
+    def test_folder_merge_with_param_raises(self, tmp_path):
+        (tmp_path / "docs").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: docs
+            steps:
+              - merge:
+                  with: "other.pdf"
+            output_folder: out
+        """)
+        with pytest.raises(SystemExit):
+            load_workflow(p)
+
+    def test_single_file_merge_without_with_raises(self, tmp_path):
+        (tmp_path / "src.pdf").write_bytes(make_pdf_bytes(1))
+        p = _write_workflow(tmp_path, """
+            input: src.pdf
+            steps:
+              - merge
+            output: out.pdf
+        """)
+        with pytest.raises(SystemExit):
+            load_workflow(p)
+
 
 # ---------------------------------------------------------------------------
 # run_workflow — single-file mode
@@ -394,6 +536,17 @@ class TestRunWorkflowSingleFile:
             run_workflow(cfg)
         assert exc_info.value.code == 1
 
+    def test_watermark_with_pages(self, tmp_path):
+        cfg = self._make_cfg(tmp_path, '  - watermark:\n      text: "X"\n      pages: "1,3"', pages=4)
+        run_workflow(cfg)
+        assert len(PdfReader(str(cfg.output)).pages) == 4
+
+    def test_watermark_invalid_pages_exit_1(self, tmp_path):
+        cfg = self._make_cfg(tmp_path, '  - watermark:\n      text: "X"\n      pages: "99"', pages=3)
+        with pytest.raises(SystemExit) as exc_info:
+            run_workflow(cfg)
+        assert exc_info.value.code == 1
+
     def test_no_partial_output_on_failure(self, tmp_path):
         src = tmp_path / "src.pdf"
         src.write_bytes(make_pdf_bytes(2))
@@ -418,6 +571,49 @@ class TestRunWorkflowSingleFile:
         cfg = load_workflow(p)
         run_workflow(cfg)
         assert len(PdfReader(str(cfg.output)).pages) == 4
+
+    def test_merge_step(self, tmp_path):
+        (tmp_path / "src.pdf").write_bytes(make_pdf_bytes(2))
+        (tmp_path / "extra.pdf").write_bytes(make_pdf_bytes(3))
+        p = _write_workflow(tmp_path, """
+            input: src.pdf
+            steps:
+              - merge:
+                  with: "extra.pdf"
+            output: out.pdf
+        """)
+        cfg = load_workflow(p)
+        run_workflow(cfg)
+        assert len(PdfReader(str(cfg.output)).pages) == 5
+
+    def test_merge_step_yaml_list(self, tmp_path):
+        (tmp_path / "src.pdf").write_bytes(make_pdf_bytes(1))
+        (tmp_path / "b.pdf").write_bytes(make_pdf_bytes(2))
+        (tmp_path / "c.pdf").write_bytes(make_pdf_bytes(3))
+        p = _write_workflow(tmp_path, """
+            input: src.pdf
+            steps:
+              - merge:
+                  with:
+                    - b.pdf
+                    - c.pdf
+            output: out.pdf
+        """)
+        cfg = load_workflow(p)
+        run_workflow(cfg)
+        assert len(PdfReader(str(cfg.output)).pages) == 6
+
+    def test_merge_missing_with_file_raises(self, tmp_path):
+        (tmp_path / "src.pdf").write_bytes(make_pdf_bytes(1))
+        p = _write_workflow(tmp_path, """
+            input: src.pdf
+            steps:
+              - merge:
+                  with: "nonexistent.pdf"
+            output: out.pdf
+        """)
+        with pytest.raises(SystemExit):
+            load_workflow(p)
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +688,148 @@ class TestRunWorkflowFolder:
 
 
 # ---------------------------------------------------------------------------
+# run_workflow — folder-merge mode
+# ---------------------------------------------------------------------------
+
+class TestRunWorkflowFolderMerge:
+    def _make_cfg(self, tmp_path, merge_params: str = "", post_steps: str = "") -> WorkflowConfig:
+        """Build a folder-merge workflow where merge is the first step."""
+        (tmp_path / "in").mkdir()
+        merge_block = f"  - merge:\n{merge_params}" if merge_params else "  - merge"
+        extra = post_steps or ""
+        content = (
+            f"input_folder: in\n"
+            f"steps:\n{merge_block}\n{extra}"
+            f"output_folder: out\n"
+        )
+        p = _write_workflow(tmp_path, content)
+        return load_workflow(p)
+
+    def test_merges_all_files(self, tmp_path):
+        cfg = self._make_cfg(tmp_path)
+        (tmp_path / "in" / "a.pdf").write_bytes(make_pdf_bytes(2))
+        (tmp_path / "in" / "b.pdf").write_bytes(make_pdf_bytes(3))
+        run_workflow(cfg)
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 5
+
+    def test_output_name_default(self, tmp_path):
+        cfg = self._make_cfg(tmp_path)
+        (tmp_path / "in" / "a.pdf").write_bytes(make_pdf_bytes(1))
+        run_workflow(cfg)
+        assert (tmp_path / "out" / "merged.pdf").exists()
+
+    def test_output_name_custom(self, tmp_path):
+        (tmp_path / "in").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge
+            output_folder: out
+            output_name: contracts_final.pdf
+        """)
+        cfg = load_workflow(p)
+        (tmp_path / "in" / "a.pdf").write_bytes(make_pdf_bytes(1))
+        run_workflow(cfg)
+        assert (tmp_path / "out" / "contracts_final.pdf").exists()
+        assert not (tmp_path / "out" / "merged.pdf").exists()
+
+    def test_pre_merge_steps(self, tmp_path):
+        # steps BEFORE merge are applied per-file
+        (tmp_path / "in").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - compress
+              - merge
+            output_folder: out
+        """)
+        cfg = load_workflow(p)
+        (tmp_path / "in" / "a.pdf").write_bytes(make_pdf_bytes(2))
+        (tmp_path / "in" / "b.pdf").write_bytes(make_pdf_bytes(3))
+        run_workflow(cfg)
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 5
+
+    def test_post_merge_steps(self, tmp_path):
+        # steps AFTER merge are applied to the single merged file
+        cfg = self._make_cfg(tmp_path, post_steps="  - compress\n")
+        (tmp_path / "in" / "a.pdf").write_bytes(make_pdf_bytes(1))
+        (tmp_path / "in" / "b.pdf").write_bytes(make_pdf_bytes(2))
+        run_workflow(cfg)
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 3
+
+    def test_merge_step_pattern(self, tmp_path):
+        cfg = self._make_cfg(tmp_path, merge_params="      pattern: \"keep*.pdf\"\n")
+        (tmp_path / "in" / "keep.pdf").write_bytes(make_pdf_bytes(2))
+        (tmp_path / "in" / "other.pdf").write_bytes(make_pdf_bytes(3))
+        run_workflow(cfg)
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 2
+
+    def test_merge_step_sort_date_reverse(self, tmp_path):
+        import os
+        (tmp_path / "in").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge:
+                  sort: date
+                  reverse: true
+            output_folder: out
+        """)
+        cfg = load_workflow(p)
+        a = tmp_path / "in" / "a.pdf"
+        b = tmp_path / "in" / "b.pdf"
+        a.write_bytes(make_pdf_bytes(1))
+        b.write_bytes(make_pdf_bytes(2))
+        os.utime(a, (1_000_000, 1_000_000))
+        os.utime(b, (2_000_000, 2_000_000))
+        run_workflow(cfg)
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 3
+
+    def test_empty_folder_returns_cleanly(self, tmp_path):
+        cfg = self._make_cfg(tmp_path)
+        run_workflow(cfg)
+        assert not (tmp_path / "out" / "merged.pdf").exists()
+
+    def test_output_dir_created(self, tmp_path):
+        cfg = self._make_cfg(tmp_path)
+        (tmp_path / "in" / "a.pdf").write_bytes(make_pdf_bytes(1))
+        run_workflow(cfg)
+        assert (tmp_path / "out").is_dir()
+
+    def test_output_exact_path(self, tmp_path):
+        (tmp_path / "in").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge
+            output: result/book.pdf
+        """)
+        cfg = load_workflow(p)
+        (tmp_path / "in" / "a.pdf").write_bytes(make_pdf_bytes(2))
+        run_workflow(cfg)
+        assert (tmp_path / "result" / "book.pdf").exists()
+
+    def test_failed_pre_merge_file_still_merges_rest_exits_1(self, tmp_path):
+        (tmp_path / "in").mkdir()
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - split:
+                  pages: "10-20"
+              - merge
+            output_folder: out
+        """)
+        cfg = load_workflow(p)
+        (tmp_path / "in" / "good.pdf").write_bytes(make_pdf_bytes(30))
+        (tmp_path / "in" / "bad.pdf").write_bytes(make_pdf_bytes(2))
+        with pytest.raises(SystemExit) as exc_info:
+            run_workflow(cfg)
+        assert exc_info.value.code == 1
+        # good.pdf succeeded, so merged output should still exist
+        assert (tmp_path / "out" / "merged.pdf").exists()
+
+
+# ---------------------------------------------------------------------------
 # CLI: pdfuse batch
 # ---------------------------------------------------------------------------
 
@@ -543,7 +881,7 @@ class TestCliBatch:
         p = _write_workflow(tmp_path, """
             input: src.pdf
             steps:
-              - merge
+              - foobar
             output: out.pdf
         """)
         result = runner.invoke(main, ["batch", str(p)])
@@ -576,3 +914,103 @@ class TestCliBatch:
         result = runner.invoke(main, ["batch", str(p)])
         assert result.exit_code == 1
         assert not (tmp_path / "out.pdf").exists()
+
+    def test_merge_step(self, runner, tmp_path):
+        (tmp_path / "src.pdf").write_bytes(make_pdf_bytes(2))
+        (tmp_path / "extra.pdf").write_bytes(make_pdf_bytes(3))
+        p = _write_workflow(tmp_path, """
+            input: src.pdf
+            steps:
+              - merge:
+                  with: "extra.pdf"
+            output: out.pdf
+        """)
+        result = runner.invoke(main, ["batch", str(p)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(tmp_path / "out.pdf")).pages) == 5
+
+    def test_folder_merge_mode(self, runner, tmp_path):
+        src = tmp_path / "in"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(2))
+        (src / "b.pdf").write_bytes(make_pdf_bytes(3))
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge
+            output_folder: out
+        """)
+        result = runner.invoke(main, ["batch", str(p)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 5
+
+    def test_folder_merge_output_name(self, runner, tmp_path):
+        src = tmp_path / "in"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(2))
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge
+            output_folder: out
+            output_name: final.pdf
+        """)
+        result = runner.invoke(main, ["batch", str(p)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert (tmp_path / "out" / "final.pdf").exists()
+
+    def test_folder_merge_pattern_flag(self, runner, tmp_path):
+        src = tmp_path / "in"
+        src.mkdir()
+        (src / "keep.pdf").write_bytes(make_pdf_bytes(2))
+        (src / "skip.pdf").write_bytes(make_pdf_bytes(3))
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge
+            output_folder: out
+        """)
+        result = runner.invoke(
+            main, ["batch", str(p), "--pattern", "keep*.pdf"], catch_exceptions=False
+        )
+        assert result.exit_code == 0
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 2
+
+    def test_folder_merge_post_steps(self, runner, tmp_path):
+        src = tmp_path / "in"
+        src.mkdir()
+        (src / "a.pdf").write_bytes(make_pdf_bytes(2))
+        (src / "b.pdf").write_bytes(make_pdf_bytes(3))
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge
+              - compress
+              - watermark:
+                  text: "DRAFT"
+            output_folder: out
+        """)
+        result = runner.invoke(main, ["batch", str(p)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 5
+
+    def test_folder_merge_sort_date(self, runner, tmp_path):
+        import os
+        src = tmp_path / "in"
+        src.mkdir()
+        a = src / "a.pdf"
+        b = src / "b.pdf"
+        a.write_bytes(make_pdf_bytes(1))
+        b.write_bytes(make_pdf_bytes(2))
+        os.utime(a, (1_000_000, 1_000_000))
+        os.utime(b, (2_000_000, 2_000_000))
+        p = _write_workflow(tmp_path, """
+            input_folder: in
+            steps:
+              - merge:
+                  sort: date
+            output_folder: out
+        """)
+        result = runner.invoke(main, ["batch", str(p)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(tmp_path / "out" / "merged.pdf")).pages) == 3

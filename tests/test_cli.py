@@ -177,6 +177,13 @@ class TestCliRotate:
         result = runner.invoke(main, ["rotate", str(src), "--angle", "45"])
         assert result.exit_code != 0
 
+    def test_out_of_range_pages_exits_1(self, runner, tmp_path):
+        src = tmp_path / "src.pdf"
+        out = tmp_path / "out.pdf"
+        src.write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["rotate", str(src), "--angle", "90", "--pages", "99", "-o", str(out)])
+        assert result.exit_code == 1
+
 
 # ---------------------------------------------------------------------------
 # watermark
@@ -213,6 +220,21 @@ class TestCliWatermark:
         src.write_bytes(make_pdf_bytes(1))
         stamp.write_bytes(make_pdf_bytes(1))
         result = runner.invoke(main, ["watermark", str(src), "--text", "X", "--stamp", str(stamp)])
+        assert result.exit_code == 1
+
+    def test_pages_flag(self, runner, tmp_path):
+        src = tmp_path / "src.pdf"
+        out = tmp_path / "out.pdf"
+        src.write_bytes(make_pdf_bytes(4))
+        result = runner.invoke(main, ["watermark", str(src), "--text", "DRAFT", "--pages", "1,3", "-o", str(out)], catch_exceptions=False)
+        assert result.exit_code == 0
+        assert len(PdfReader(str(out)).pages) == 4
+
+    def test_pages_out_of_range_exits_1(self, runner, tmp_path):
+        src = tmp_path / "src.pdf"
+        out = tmp_path / "out.pdf"
+        src.write_bytes(make_pdf_bytes(3))
+        result = runner.invoke(main, ["watermark", str(src), "--text", "X", "--pages", "99", "-o", str(out)])
         assert result.exit_code == 1
 
 

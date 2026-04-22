@@ -192,6 +192,27 @@ class TestRotatePdf:
         with pytest.raises(ValueError):
             rotate_pdf(src, out, 45)
 
+    def test_out_of_range_page_raises(self, tmp_path):
+        from pdfuse.operations import rotate_pdf
+        src = write_pdf(3, dir=str(tmp_path))
+        out = tmp_path / "out.pdf"
+        with pytest.raises(ValueError, match="out of range"):
+            rotate_pdf(src, out, 90, pages=[99])
+
+    def test_page_zero_raises(self, tmp_path):
+        from pdfuse.operations import rotate_pdf
+        src = write_pdf(3, dir=str(tmp_path))
+        out = tmp_path / "out.pdf"
+        with pytest.raises(ValueError, match="out of range"):
+            rotate_pdf(src, out, 90, pages=[0])
+
+    def test_partial_invalid_pages_raises(self, tmp_path):
+        from pdfuse.operations import rotate_pdf
+        src = write_pdf(3, dir=str(tmp_path))
+        out = tmp_path / "out.pdf"
+        with pytest.raises(ValueError):
+            rotate_pdf(src, out, 90, pages=[1, 4])  # page 4 invalid on 3-page doc
+
 
 # ---------------------------------------------------------------------------
 # watermark_pdf
@@ -234,6 +255,21 @@ class TestWatermarkPdf:
         out = tmp_path / "out.pdf"
         with pytest.raises(SystemExit):
             watermark_pdf(empty, out, watermark_text="X")
+
+    def test_specific_pages(self, tmp_path):
+        from pdfuse.operations import watermark_pdf
+        src = write_pdf(4, dir=str(tmp_path))
+        out = tmp_path / "out.pdf"
+        result = watermark_pdf(src, out, watermark_text="DRAFT", pages=[1, 3])
+        assert result == 4
+        assert len(PdfReader(str(out)).pages) == 4
+
+    def test_out_of_range_page_raises(self, tmp_path):
+        from pdfuse.operations import watermark_pdf
+        src = write_pdf(3, dir=str(tmp_path))
+        out = tmp_path / "out.pdf"
+        with pytest.raises(SystemExit):
+            watermark_pdf(src, out, watermark_text="X", pages=[99])
 
 
 # ---------------------------------------------------------------------------

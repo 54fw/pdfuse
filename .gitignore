@@ -16,3 +16,4 @@ pdfuse.egg-info
 *.nav
 *.vrb
 *.synctex.gz
+demo

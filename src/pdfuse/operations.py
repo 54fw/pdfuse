@@ -243,6 +243,12 @@ def rotate_pdf(
 
     # Normalise pages set to 0-indexed
     if pages:
+        for p in pages:
+            if p < 1 or p > total:
+                raise ValueError(
+                    f"Page {p} is out of range "
+                    f"(document has {total} page{'s' if total != 1 else ''})."
+                )
         target = {p - 1 for p in pages}
     else:
         target = set(range(total))
@@ -305,11 +311,13 @@ def watermark_pdf(
     output: Path,
     watermark_text: Optional[str] = None,
     watermark_pdf: Optional[Path] = None,
+    pages: Optional[List[int]] = None,
 ) -> int:
-    """Overlay a watermark on every page of *input_path*.
+    """Overlay a watermark on pages of *input_path*.
 
     Provide either *watermark_text* (string rendered diagonally) or
-    *watermark_pdf* (first page used as stamp).  Returns page count.
+    *watermark_pdf* (first page used as stamp).  *pages* is a 1-indexed list
+    of page numbers to watermark; None means all pages.  Returns page count.
     """
     import io
     from pypdf import PdfReader, PdfWriter
@@ -325,6 +333,18 @@ def watermark_pdf(
         err_console.print("[bold red]Error:[/bold red] Provide --text or --stamp.")
         raise SystemExit(1)
 
+    if pages:
+        for p in pages:
+            if p < 1 or p > total:
+                err_console.print(
+                    f"[bold red]Error:[/bold red] Page {p} is out of range "
+                    f"(document has {total} page{'s' if total != 1 else ''})."
+                )
+                raise SystemExit(1)
+        target = {p - 1 for p in pages}
+    else:
+        target = set(range(total))
+
     writer = PdfWriter()
 
     with Progress(
@@ -335,19 +355,20 @@ def watermark_pdf(
         console=console,
     ) as progress:
         task = progress.add_task("Applying watermark…", total=total)
-        for page in reader.pages:
+        for i, page in enumerate(reader.pages):
             box = page.mediabox
             pw = float(box.width)
             ph = float(box.height)
 
-            if watermark_text:
-                wm_bytes = _make_text_watermark_pdf(watermark_text, pw, ph)
-                wm_reader = PdfReader(io.BytesIO(wm_bytes))
-            else:
-                wm_reader = PdfReader(str(watermark_pdf))
+            if i in target:
+                if watermark_text:
+                    wm_bytes = _make_text_watermark_pdf(watermark_text, pw, ph)
+                    wm_reader = PdfReader(io.BytesIO(wm_bytes))
+                else:
+                    wm_reader = PdfReader(str(watermark_pdf))
+                wm_page = wm_reader.pages[0]
+                page.merge_page(wm_page)
 
-            wm_page = wm_reader.pages[0]
-            page.merge_page(wm_page)
             writer.add_page(page)
             progress.advance(task)
 
